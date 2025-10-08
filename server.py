@@ -77,6 +77,7 @@ class Booking:
         self.facility_name = facility_name
         self.start_time = start_time
         self.end_time = end_time
+        self.original_end_time = end_time  # Store original end time for idempotent extend operation
         self.cancelled = False  # Track if booking has been cancelled
 
     def overlaps(self, start: TimeSlot, end: TimeSlot) -> bool:
@@ -433,16 +434,15 @@ class FacilityBookingServer:
 
         This operation extends the end time of an existing booking.
 
-        Why it's IDEMPOTENT:
-        - Always extends from the current booking's end time
-        - Executing multiple times with the same extension will keep extending
-        - The operation is additive, so repeated execution changes the state
-        - However, if the extension amount is calculated from original booking,
-          it would be truly idempotent (same result regardless of executions)
+        Why it's TRULY IDEMPOTENT:
+        - Always extends from the ORIGINAL end time (stored at booking creation)
+        - Executing multiple times with the same extension produces the SAME result
+        - First execution: original_end + extension = new_end
+        - Second execution: original_end + extension = same new_end (no change)
+        - Third execution: original_end + extension = same new_end (no change)
 
-        Note: In this implementation, each execution extends further.
-        For true idempotency, you'd store the original end time and always
-        extend from that reference point.
+        This demonstrates true idempotency: f(x) = f(f(x)) = f(f(f(x))) = ...
+        The result is the same regardless of how many times you execute it.
         """
         confirmation_id = unmarshaller.unpack_string()
         extension_minutes = unmarshaller.unpack_uint32()
@@ -459,8 +459,9 @@ class FacilityBookingServer:
             return self._build_error_response(ErrorCode.BOOKING_NOT_FOUND,
                                               "Booking has been cancelled")
 
-        # Calculate new end time by extending current end time
-        new_end_minutes = booking.end_time.to_minutes() + extension_minutes
+        # Calculate new end time by extending from ORIGINAL end time (IDEMPOTENT!)
+        # This ensures the same extension value always produces the same result
+        new_end_minutes = booking.original_end_time.to_minutes() + extension_minutes
 
         # Validate new end time doesn't exceed week boundary
         if new_end_minutes > 7 * 24 * 60:
@@ -469,18 +470,33 @@ class FacilityBookingServer:
 
         new_end = TimeSlot(new_end_minutes // (24 * 60), (new_end_minutes // 60) % 24, new_end_minutes % 60)
 
+        # Check if this is actually changing the booking (avoid unnecessary updates)
+        if booking.end_time == new_end:
+            # Already extended to this time - return success without re-notifying
+            print(f"Booking already extended to {new_end} (idempotent - no change)")
+            builder = MessageBuilder()
+            builder.add_uint8(MessageType.EXTEND_RESPONSE)
+            builder.add_bool(True)
+            builder.add_string(f"Booking extended to {new_end}")
+            return builder.build()
+
         facility = self.facilities[booking.facility_name]
 
         # Check if extension period is available (don't conflict with other bookings)
+        # Check from current end to new end
+        check_start = min(booking.end_time, new_end)
+        check_end = max(booking.end_time, new_end)
+
         for other_booking in facility.bookings:
             if other_booking.confirmation_id != confirmation_id:
-                if other_booking.overlaps(booking.end_time, new_end):
+                if other_booking.overlaps(check_start, check_end):
                     return self._build_error_response(ErrorCode.FACILITY_UNAVAILABLE,
                                                       "Cannot extend: facility unavailable during extension period")
 
         # Update the booking's end time
         old_end = booking.end_time
         booking.end_time = new_end
+        print(f"Extended booking from {old_end} to {new_end}")
 
         # Notify all monitors that facility availability has changed
         self._notify_monitors(booking.facility_name)

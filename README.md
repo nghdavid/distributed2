@@ -154,58 +154,237 @@ Availability for 'Meeting Room A':
 
 ## Experiments
 
-### Running Automated Tests
+The project includes automated test scripts to demonstrate different aspects of the distributed system.
 
-#### Experiment 1: Semantics Comparison
+### Available Test Scripts
 
-This experiment demonstrates the critical difference between invocation semantics:
+1. **`test_experiment.py`** - Demonstrates invocation semantics differences
+2. **`test_monitor.py`** - Tests monitoring/callback functionality
+3. **`auto_book.sh`** - Automated booking script for triggering monitor callbacks
+4. **`kill_all.sh`** - Cleanup script to kill all server/client processes
 
+### Experiment 1: Invocation Semantics Comparison
+
+This experiment demonstrates the critical difference between at-least-once and at-most-once semantics with duplicate requests.
+
+#### Running on Same Computer (localhost)
+
+**Test at-least-once semantics:**
 ```bash
-# Test with at-least-once semantics
-python server.py 8000 at-least-once 0.0
-python test_experiment.py localhost 8000 at-least-once
+# Terminal 1: Start server
+python server.py 3000 at-least-once 0.0
 
-# Test with at-most-once semantics
-python server.py 8000 at-most-once 0.0
-python test_experiment.py localhost 8000 at-most-once
+# Terminal 2: Run experiment
+python test_experiment.py localhost 3000 at-least-once
+```
+
+**Test at-most-once semantics:**
+```bash
+# Terminal 1: Start server
+python server.py 3000 at-most-once 0.0
+
+# Terminal 2: Run experiment
+python test_experiment.py localhost 3000 at-most-once
+```
+
+#### Running on Different Computers (network)
+
+**Computer 1 (Server) - IP: 44.209.168.3:**
+```bash
+python server.py 3000 at-most-once 0.0
+```
+
+**Computer 2 (Test Client):**
+```bash
+python test_experiment.py 44.209.168.3 3000 at-most-once
 ```
 
 **What it tests:**
-- IDEMPOTENT operation (EXTEND): Both semantics work correctly
-- NON-IDEMPOTENT operation (CANCEL):
-  - At-least-once: FAILS (second execution causes error)
-  - At-most-once: SUCCEEDS (duplicate filtered, cached reply returned)
+- **IDEMPOTENT operation (EXTEND)**: Both semantics work correctly
+  - At-least-once: Duplicate re-executed, but safe
+  - At-most-once: Duplicate filtered, cached reply returned
+- **NON-IDEMPOTENT operation (CANCEL)**:
+  - At-least-once: ❌ FAILS (second execution causes "already cancelled" error)
+  - At-most-once: ✅ SUCCEEDS (duplicate filtered, cached reply returned)
 
-#### Experiment 2: Monitoring Test
+**Key Learning:** At-most-once semantics is essential for non-idempotent operations to prevent incorrect behavior from duplicate execution.
 
-Tests multiple clients monitoring concurrently:
+### Experiment 2: Monitor Callbacks (Single Client)
 
+Tests the server callback mechanism where clients register to monitor a facility and receive real-time availability updates.
+
+#### Setup
+
+**Terminal 1 (Server):**
 ```bash
-python server.py 8000 at-most-once
-python test_monitor.py localhost 8000
+python server.py 3000 at-most-once 0.0
+```
+
+**Terminal 2 (Monitor Client):**
+```bash
+python test_monitor.py localhost 3000 1
+```
+
+The monitor client will:
+- Register to monitor "Meeting Room A" for 1200 seconds (20 minutes)
+- Display any booking changes in real-time
+- Show total updates received when monitoring period ends
+
+#### Triggering Callbacks
+
+**Terminal 3 (Make bookings to trigger updates):**
+
+Use the automated booking script:
+```bash
+# Book Monday 10:00-11:00 (triggers callback to monitor)
+./auto_book.sh 0 0
+
+# Book Tuesday 10:00-11:00 (triggers another callback)
+./auto_book.sh 1 1
+
+# Book Wednesday 10:00-11:00 (triggers another callback)
+./auto_book.sh 2 2
+```
+
+Or use the interactive client:
+```bash
+python client.py localhost 3000 at-most-once
+# Select option 2 to book "Meeting Room A"
 ```
 
 **What it tests:**
-- Multiple clients can monitor the same facility
-- All registered clients receive callbacks when bookings change
-- Monitor registrations expire after specified duration
+- Client registration for monitoring
+- Server sends callbacks when bookings change (book/extend/cancel)
+- Client receives and displays updates in real-time
+- Monitor continues listening for entire duration
+- Multiple bookings trigger multiple callbacks
 
-#### Experiment 3: Message Loss Testing
 
-Tests fault tolerance with simulated packet loss:
+**Important for network testing:**
+- Firewall must allow UDP traffic on ports 3000 and 3001
+- `CLIENT_BIND_PORT` in `test_monitor.py` should be set to specific port (e.g., 3001)
+- Server will send callbacks to the IP:port it sees from registration packet
 
+#### Testing Across Internet (Cloud Server)
+
+**Server (Cloud VM - e.g., AWS EC2) - Public IP: 44.209.168.3:**
 ```bash
-# Start server with 30% message loss
-python server.py 8000 at-least-once 0.3
-
-# Use client normally - observe retries
-python client.py localhost 8000 at-least-once
+python server.py 3000 at-most-once 0.0
+# Ensure security group allows UDP port 3000 inbound
 ```
 
-**What it tests:**
+**Monitor Client (Your computer):**
+```bash
+python test_monitor.py 44.209.168.3 3000 1
+```
+
+**Booking Client (Another computer or same):**
+```bash
+# Update SERVER_HOST in auto_book.sh to 44.209.168.3
+./auto_book.sh 0 0
+```
+
+### Experiment 3: Message Loss & Fault Tolerance
+
+Tests the system's behavior under unreliable network conditions with simulated packet loss.
+
+#### At-Least-Once with Message Loss
+
+```bash
+# Terminal 1: Start server with 20% packet loss
+python server.py 3000 at-least-once 0.2
+
+# Terminal 2: Run experiment
+python test_experiment.py localhost 3000 at-least-once
+```
+
+**Expected behavior:**
+- Client retries on timeout (you'll see retry attempts)
+- Some requests may execute multiple times
+- Non-idempotent operations (CANCEL) may fail on retry
+
+#### At-Most-Once with Message Loss
+
+```bash
+# Terminal 1: Start server with 20% packet loss
+python server.py 3000 at-most-once 0.2
+
+# Terminal 2: Run experiment
+python test_experiment.py localhost 3000 at-most-once
+```
+
+**Expected behavior:**
 - Client retries on timeout
-- At-least-once: May execute operations multiple times
-- At-most-once: Duplicate requests are filtered even with retries
+- Duplicate requests are filtered by request history
+- Both idempotent and non-idempotent operations work correctly
+
+**What it tests:**
+- Automatic client retries on timeout
+- At-least-once: May execute operations multiple times (unsafe for non-idempotent)
+- At-most-once: Duplicate requests filtered even with retries (safe for all operations)
+
+### Helper Scripts
+
+#### auto_book.sh - Automated Booking
+
+Automates the interactive client to make bookings and trigger monitor callbacks.
+
+**Usage:**
+```bash
+./auto_book.sh [start_day] [end_day]
+```
+
+**Parameters:**
+- `start_day`: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday), default: 0
+- `end_day`: Day of week (0-6), default: 0
+- Time is fixed at 10:00-11:00 (configurable in script)
+
+**Examples:**
+```bash
+./auto_book.sh           # Book Monday 10:00-11:00
+./auto_book.sh 0 0       # Book Monday 10:00-11:00
+./auto_book.sh 1 1       # Book Tuesday 10:00-11:00
+./auto_book.sh 2 2       # Book Wednesday 10:00-11:00
+```
+
+#### kill_all.sh - Process Cleanup
+
+Kills all running server and client processes and frees up port 3000.
+
+**Usage:**
+```bash
+./kill_all.sh
+```
+
+This is useful when:
+- Server/client processes hang
+- Getting "Address already in use" errors
+- Need to restart experiments cleanly
+
+### Configuration Notes
+
+#### test_monitor.py Configuration
+
+Edit these variables at the top of the file:
+
+```python
+FACILITY_NAME = "Meeting Room A"     # Facility to monitor
+MONITOR_DURATION = 1200              # Monitoring duration (20 minutes)
+CLIENT_BIND_IP = ''                  # Client IP ('' = all interfaces)
+CLIENT_BIND_PORT = 3001              # Client port (0 = random, or specific like 3001)
+```
+
+#### auto_book.sh Configuration
+
+Edit these variables in the file:
+
+```bash
+SERVER_HOST="44.209.168.3"           # Server IP (change for network testing)
+SERVER_PORT="3000"                   # Server port
+DEFAULT_START_HOUR="10"              # Booking start hour
+DEFAULT_END_HOUR="11"                # Booking end hour
+FACILITY_NAME="Meeting Room A"       # Facility to book
+```
 
 ## Implementation Details
 
@@ -357,78 +536,10 @@ Unlike TCP, UDP provides no guarantees. Applications must implement:
 - Duplicate detection
 - In-order delivery (if needed)
 
-## Troubleshooting
-
-### Common Issues
-
-**1. "Address already in use"**
-```bash
-# Wait a moment or use a different port
-python server.py 8001 at-most-once
-```
-
-**2. Client timeout**
-- Check server is running
-- Verify host and port are correct
-- Check firewall settings
-
-**3. "Unknown message type"**
-- Ensure client and server are using same code version
-- Check network byte order in marshalling
-
-## Future Enhancements
-
-1. **Persistent storage**: Save bookings to disk/database
-2. **Authentication**: User login and access control
-3. **Booking ownership**: Track which user made each booking
-4. **Multi-day bookings**: Support bookings spanning multiple weeks
-5. **Search functionality**: Find available facilities by criteria
-6. **Email notifications**: Alert users about booking changes
-7. **Web interface**: Replace CLI with web UI
-8. **TCP option**: Alternative transport for comparison
-9. **Encryption**: Secure communication between client and server
-10. **Load balancing**: Multiple servers with coordinator
-
-## References
-
-- Coulouris et al., "Distributed Systems: Concepts and Design"
-- UDP socket programming in Python
-- Network byte order and marshalling
-- RPC invocation semantics
-
 ## Author & License
 
 This project was developed as part of a distributed systems course assignment.
 
 **License**: Educational use only
 
----
 
-## Quick Start Example
-
-### Terminal 1 (Server)
-```bash
-python server.py 8000 at-most-once 0.0
-```
-
-### Terminal 2 (Client)
-```bash
-python client.py localhost 8000 at-most-once
-
-# Then in the menu:
-# 1. Query availability: facility="Meeting Room A", days=0,1
-# 2. Book facility: Mon 10:00 to 11:00
-# 3. Receive confirmation ID
-# 5. Extend booking by 30 minutes
-# 6. Cancel booking
-```
-
-### Terminal 3 (Experiments)
-```bash
-python test_experiment.py localhost 8000 at-most-once
-python test_monitor.py localhost 8000
-```
-
----
-
-**Enjoy exploring distributed systems concepts!** 🚀

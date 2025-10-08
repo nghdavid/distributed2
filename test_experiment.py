@@ -5,6 +5,137 @@ at-least-once and at-most-once semantics.
 This script shows that at-least-once can lead to wrong results for
 non-idempotent operations (cancel booking), while at-most-once handles
 both idempotent and non-idempotent operations correctly.
+
+USAGE EXAMPLES:
+===============
+
+RUNNING ON SAME COMPUTER (localhost):
+--------------------------------------
+
+Scenario 1: Test at-least-once semantics
+-----------------------------------------
+Terminal 1 (Server):
+    python server.py 3000 at-least-once 0.0
+
+Terminal 2 (Test):
+    python test_experiment.py localhost 3000 at-least-once
+
+Expected Result:
+    - EXTEND operation: Both requests succeed (idempotent - safe)
+    - CANCEL operation: First succeeds, second fails with "already cancelled" error
+    - Demonstrates: At-least-once re-executes duplicate requests
+
+
+Scenario 2: Test at-most-once semantics
+----------------------------------------
+Terminal 1 (Server):
+    python server.py 3000 at-most-once 0.0
+
+Terminal 2 (Test):
+    python test_experiment.py localhost 3000 at-most-once
+
+Expected Result:
+    - EXTEND operation: Both requests succeed (duplicate filtered)
+    - CANCEL operation: Both requests succeed (duplicate filtered, cached reply)
+    - Demonstrates: At-most-once prevents duplicate execution
+
+
+Scenario 3: Test with message loss (at-least-once)
+---------------------------------------------------
+Terminal 1 (Server):
+    python server.py 3000 at-least-once 0.2    # 20% message loss
+
+Terminal 2 (Test):
+    python test_experiment.py localhost 3000 at-least-once
+
+Expected Result:
+    - May see timeouts and retries
+    - Duplicate execution may occur if reply is lost
+    - Non-idempotent operations can fail on retry
+
+
+Scenario 4: Test with message loss (at-most-once)
+--------------------------------------------------
+Terminal 1 (Server):
+    python server.py 3000 at-most-once 0.2    # 20% message loss
+
+Terminal 2 (Test):
+    python test_experiment.py localhost 3000 at-most-once
+
+Expected Result:
+    - May see timeouts and retries
+    - Duplicate requests are filtered by server
+    - Both idempotent and non-idempotent operations work correctly
+
+
+RUNNING ON DIFFERENT COMPUTERS (network):
+------------------------------------------
+
+Scenario 5: Server and test client on different machines
+---------------------------------------------------------
+Computer 1 (Server) - IP: 192.168.1.100:
+    python server.py 3000 at-most-once 0.0
+
+Computer 2 (Test Client):
+    # Use the server's IP address instead of localhost
+    python test_experiment.py 192.168.1.100 3000 at-most-once
+
+Important Notes for Network Testing:
+    - Both computers must be on the same network
+    - Firewall must allow UDP traffic on port 3000
+    - Server binds to '' (all interfaces) automatically
+    - Replace 192.168.1.100 with actual server IP address
+
+
+Scenario 6: Testing across Internet (cloud/remote)
+---------------------------------------------------
+Server (Cloud VM - e.g., AWS EC2):
+    # Use public IP or domain name
+    # Example: Server public IP is 54.123.45.67
+
+    python server.py 3000 at-most-once 0.0
+
+Client (Your local machine):
+    python test_experiment.py 54.123.45.67 3000 at-most-once
+
+Important Notes for Internet Testing:
+    - Server needs public IP address or domain name
+    - Cloud security group must allow UDP port 3000 inbound
+    - May experience higher latency and packet loss
+    - NAT/router configuration may affect connectivity
+
+WHAT THIS SCRIPT TESTS:
+========================
+
+Experiment 1: IDEMPOTENT Operation (EXTEND booking)
+----------------------------------------------------
+- Books a facility
+- Sends EXTEND request with request_id=X
+- Sends duplicate EXTEND request with SAME request_id=X (simulates retry)
+- Checks if both responses are successful
+
+Expected behavior:
+    - At-least-once: Both succeed (operation re-executed, but idempotent)
+    - At-most-once: Both succeed (second is cached reply, not re-executed)
+
+
+Experiment 2: NON-IDEMPOTENT Operation (CANCEL booking)
+--------------------------------------------------------
+- Books a facility
+- Sends CANCEL request with request_id=Y
+- Sends duplicate CANCEL request with SAME request_id=Y (simulates retry)
+- Checks if both responses are successful
+
+Expected behavior:
+    - At-least-once: First succeeds, second fails (operation re-executed)
+    - At-most-once: Both succeed (second is cached reply, not re-executed)
+
+
+KEY LEARNING:
+=============
+This demonstrates WHY at-most-once semantics is critical for non-idempotent
+operations in unreliable networks (like UDP). Without duplicate filtering,
+retries can cause operations to be executed multiple times, leading to errors.
 """
 
 import socket

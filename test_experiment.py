@@ -71,32 +71,16 @@ Expected Result:
 RUNNING ON DIFFERENT COMPUTERS (network):
 ------------------------------------------
 
-Scenario 5: Server and test client on different machines
----------------------------------------------------------
-Computer 1 (Server) - IP: 192.168.1.100:
-    python server.py 3000 at-most-once 0.0
-
-Computer 2 (Test Client):
-    # Use the server's IP address instead of localhost
-    python test_experiment.py 192.168.1.100 3000 at-most-once
-
-Important Notes for Network Testing:
-    - Both computers must be on the same network
-    - Firewall must allow UDP traffic on port 3000
-    - Server binds to '' (all interfaces) automatically
-    - Replace 192.168.1.100 with actual server IP address
-
-
-Scenario 6: Testing across Internet (cloud/remote)
+Scenario 5: Testing across Internet (cloud/remote)
 ---------------------------------------------------
 Server (Cloud VM - e.g., AWS EC2):
     # Use public IP or domain name
-    # Example: Server public IP is 54.123.45.67
+    # Example: Server public IP is 44.209.168.3
 
     python server.py 3000 at-most-once 0.0
 
 Client (Your local machine):
-    python test_experiment.py 54.123.45.67 3000 at-most-once
+    python test_experiment.py 44.209.168.3 3000 at-most-once
 
 Important Notes for Internet Testing:
     - Server needs public IP address or domain name

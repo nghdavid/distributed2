@@ -121,39 +121,52 @@ class Facility:
         Get available time slots for specified days.
 
         Algorithm:
-        1. For each requested day, get all non-cancelled bookings
+        1. For each requested day, get all non-cancelled bookings that overlap with the day
         2. Sort bookings by start time
         3. Find gaps between bookings (available slots)
         4. Return list of (start, end) tuples for each available slot
+
+        Note: Handles multi-day bookings correctly by checking if a booking
+        overlaps with the requested day, not just if it starts on that day.
 
         Returns:
             Dictionary mapping day -> list of available (start, end) time slots
         """
         availability = {}
         for day in days:
-            # Get all non-cancelled bookings for this day, sorted by start time
-            day_bookings = sorted([b for b in self.bookings if not b.cancelled and b.start_time.day == day],
-                                  key=lambda x: x.start_time)
+            day_start = TimeSlot(day, 0, 0)
+            day_end = TimeSlot(day, 24, 0)  # Start of next day
+
+            # Get all non-cancelled bookings that overlap with this day
+            # A booking overlaps if: booking.end_time > day_start AND booking.start_time < day_end
+            day_bookings = sorted(
+                [b for b in self.bookings
+                 if not b.cancelled and b.end_time > day_start and b.start_time < day_end],
+                key=lambda x: x.start_time
+            )
 
             slots = []
-            current = TimeSlot(day, 0, 0)  # Start of day
-            end_of_day = TimeSlot(day, 23, 59)
+            current = day_start
 
             # Find gaps between bookings
             for booking in day_bookings:
-                if current < booking.start_time:
+                # Determine the effective start and end of the booking within this day
+                booking_start_today = max(booking.start_time, day_start)
+                booking_end_today = min(booking.end_time, day_end)
+
+                if current < booking_start_today:
                     # There's a gap before this booking
-                    slots.append((current, booking.start_time))
-                # Move to end of this booking
-                current = max(current, booking.end_time)
+                    slots.append((current, booking_start_today))
+                # Move to end of this booking (or stay at current, whichever is later)
+                current = max(current, booking_end_today)
 
             # Add remaining time until end of day
-            if current <= end_of_day:
-                slots.append((current, TimeSlot(day, 24, 0)))
+            if current < day_end:
+                slots.append((current, day_end))
 
             # If no bookings, entire day is available
             if not day_bookings:
-                slots.append((TimeSlot(day, 0, 0), TimeSlot(day, 24, 0)))
+                slots.append((day_start, day_end))
 
             availability[day] = slots
 
@@ -393,7 +406,9 @@ class FacilityBookingServer:
         # Update booking
         booking.start_time = new_start
         booking.end_time = new_end
-
+        booking.original_end_time = new_end  # Update original end time for extend operation
+        print(f"Booking changed to from {new_start} to {new_end}")
+        
         # Notify monitors
         self._notify_monitors(booking.facility_name)
 

@@ -93,14 +93,15 @@ distributed2/
 
 ```bash
 # At-least-once semantics (no duplicate filtering)
-python server.py <port> at-least-once [loss_probability]
+python server.py <port> at-least-once [loss_probability_request] [loss_probability_reply]
 
 # At-most-once semantics (with duplicate filtering)
-python server.py <port> at-most-once [loss_probability]
+python server.py <port> at-most-once [loss_probability_request] [loss_probability_reply]
 
 # Examples:
 python server.py 8000 at-least-once          # No message loss
-python server.py 8000 at-most-once 0.2       # 20% message loss
+python server.py 8000 at-most-once 0.2       # 20% request and 20% reply message loss
+python server.py 8000 at-most-once 0.2 0.3   # 20% request and 30% reply message loss
 ```
 
 **Parameters:**

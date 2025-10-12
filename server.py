@@ -206,7 +206,7 @@ class FacilityBookingServer:
     - request_history: Cache of (client, request_id) -> (reply, timestamp) for at-most-once
     """
 
-    def __init__(self, port: int, semantics: str, loss_probability: float = 0.0):
+    def __init__(self, port: int, semantics: str, loss_probability_request: float = 0.0, loss_probability_reply: float = 0.0):
         """
         Initialize the server.
 
@@ -217,7 +217,9 @@ class FacilityBookingServer:
         """
         self.port = port
         self.semantics = semantics  # Determines duplicate request handling
-        self.loss_probability = loss_probability  # For testing fault tolerance
+        # self.loss_probability = loss_probability  # For testing fault tolerance
+        self.loss_probability_request = loss_probability_request
+        self.loss_probability_reply = loss_probability_reply
         self.facilities: Dict[str, Facility] = {}  # All facilities
         self.bookings: Dict[str, Booking] = {}  # All bookings by confirmation ID
         self.next_confirmation_id = 1  # Counter for unique confirmation IDs
@@ -250,12 +252,19 @@ class FacilityBookingServer:
         self.next_confirmation_id += 1
         return conf_id
 
-    def _should_simulate_loss(self) -> bool:
+    def _should_simulate_loss_request(self) -> bool:
         """
         Simulate message loss for testing fault tolerance.
         Returns True with probability equal to loss_probability.
         """
-        return random.random() < self.loss_probability
+        return random.random() < self.loss_probability_request
+    
+    def _should_simulate_loss_reply(self) -> bool:
+        """
+        Simulate message loss for testing fault tolerance.
+        Returns True with probability equal to loss_probability.
+        """
+        return random.random() < self.loss_probability_reply
 
     def _clean_expired_monitors(self):
         """
@@ -659,7 +668,9 @@ class FacilityBookingServer:
         """
         print(f"Facility Booking Server started on port {self.port}")
         print(f"Invocation semantics: {self.semantics}")
-        print(f"Message loss probability: {self.loss_probability}")
+        # print(f"Message loss probability: {self.loss_probability}")
+        print(f"Simulated loss probability (request): {self.loss_probability_request}")
+        print(f"Simulated loss probability (reply): {self.loss_probability_reply}")
         print(f"Available facilities: {', '.join(self.facilities.keys())}")
         print("Waiting for requests...\n")
 
@@ -670,7 +681,7 @@ class FacilityBookingServer:
                 data, client_addr = self.socket.recvfrom(65507)
 
                 # Simulate message loss for testing fault tolerance
-                if self._should_simulate_loss():
+                if self._should_simulate_loss_request():
                     print(f"Simulated loss of request from {client_addr}")
                     continue  # Drop this request
 
@@ -678,7 +689,7 @@ class FacilityBookingServer:
                 response = self._process_request(data, client_addr)
 
                 # Simulate reply loss for testing fault tolerance
-                if self._should_simulate_loss():
+                if self._should_simulate_loss_reply():
                     print(f"Simulated loss of reply to {client_addr}")
                     continue  # Drop this reply
 
@@ -708,9 +719,12 @@ if __name__ == "__main__":
     semantics = sys.argv[2]
     loss_probability = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
 
+    loss_probability_request = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
+    loss_probability_reply = float(sys.argv[4]) if len(sys.argv) > 4 else loss_probability_request
+
     if semantics not in ['at-least-once', 'at-most-once']:
         print("Error: semantics must be 'at-least-once' or 'at-most-once'")
         sys.exit(1)
 
-    server = FacilityBookingServer(port, semantics, loss_probability)
+    server = FacilityBookingServer(port, semantics, loss_probability_request, loss_probability_reply)
     server.run()
